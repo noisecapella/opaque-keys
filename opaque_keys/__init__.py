@@ -90,7 +90,7 @@ class OpaqueKey(object):
     Deserialization is performed by the :meth:`from_string` method.
     """
     __metaclass__ = OpaqueKeyMetaclass
-    __slots__ = ('_initialized', 'deprecated')
+    __slots__ = ('_initialized', 'deprecated', '_serialized_key')
 
     KEY_FIELDS = []
     CANONICAL_NAMESPACE = None
@@ -160,10 +160,18 @@ class OpaqueKey(object):
         """
         Serialize this :class:`OpaqueKey`, in the form ``<CANONICAL_NAMESPACE>:<value of _to_string>``.
         """
+        if hasattr(self, '_serialized_key'):
+            return self._serialized_key
+
         if self.deprecated:
             # no namespace on deprecated
-            return self._to_deprecated_string()
-        return self.NAMESPACE_SEPARATOR.join([self.CANONICAL_NAMESPACE, self._to_string()])  # pylint: disable=no-member
+            self._serialized_key = self._to_deprecated_string()
+        else:
+            self._serialized_key = self.NAMESPACE_SEPARATOR.join(
+                [self.CANONICAL_NAMESPACE, self._to_string()]  # pylint: disable=no-member
+            )
+
+        return self._serialized_key
 
     @classmethod
     def from_string(cls, serialized):
@@ -183,10 +191,14 @@ class OpaqueKey(object):
         cls._drivers()
         try:
             namespace, rest = cls._separate_namespace(serialized)
-            return cls.get_namespace_plugin(namespace)._from_string(rest)
+            key = cls.get_namespace_plugin(namespace)._from_string(rest)
+            key._serialized_key = serialized
+            return key
         except InvalidKeyError:
             if hasattr(cls, 'deprecated_fallback'):
-                return cls.deprecated_fallback._from_deprecated_string(serialized)
+                key = cls.deprecated_fallback._from_deprecated_string(serialized)
+                key._serialized_key = serialized
+                return key
             raise InvalidKeyError(cls, serialized)
 
     @classmethod
@@ -318,11 +330,24 @@ class OpaqueKey(object):
         if all(value == existing_values[key] for (key, value) in kwargs.iteritems()):
             return self
 
+        # print existing_values
+        # print kwargs
+
         existing_values.update(kwargs)
-        return type(self)(**existing_values)
+
+        # print existing_values
+
+        obj = type(self)(**existing_values)
+
+        print obj.__slots__
+
+        # print getattr(obj, '_serialized_key', 'THIS IS RIGHT')
+        # print unicode(obj)
+        # print unicode(obj.version_guid)
+        return obj
 
     def __setattr__(self, name, value):
-        if getattr(self, '_initialized', False):
+        if name != '_serialized_key' and getattr(self, '_initialized', False):
             raise AttributeError("Can't set {!r}. OpaqueKeys are immutable.".format(name))
 
         super(OpaqueKey, self).__setattr__(name, value)
@@ -362,11 +387,13 @@ class OpaqueKey(object):
     @property
     def _key(self):
         """Returns a tuple of key fields"""
+        return unicode(self)
         # pylint: disable=no-member
-        return tuple(getattr(self, field) for field in self.KEY_FIELDS) + (self.CANONICAL_NAMESPACE, self.deprecated)
+        # return tuple(getattr(self, field) for field in self.KEY_FIELDS) + (self.CANONICAL_NAMESPACE, self.deprecated)
 
     def __eq__(self, other):
-        return isinstance(other, OpaqueKey) and self._key == other._key  # pylint: disable=protected-access
+        return unicode(self) == unicode(other)
+        # return isinstance(other, OpaqueKey) and self._key == other._key  # pylint: disable=protected-access
 
     def __ne__(self, other):
         return not self == other
